@@ -37,8 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.title = item.button?.image == nil ? "SW" : ""
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Switcher  Option-Tab", action: #selector(showSwitcher), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show Switcher  Command-Tab", action: #selector(showSwitcher), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Request Accessibility Permission", action: #selector(requestAccessibilityPermission), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Request Input Monitoring Permission", action: #selector(requestInputMonitoringPermission), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         item.menu = menu
@@ -46,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupHotKey() {
-        let manager = HotKeyManager.optionTab()
+        let manager = HotKeyManager.commandTab()
         manager.handler = { [weak self] in
             self?.handleSwitcherHotKey()
         }
@@ -143,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !event.modifierFlags.contains(.option) {
+        if !event.modifierFlags.contains(.command) {
             activateSelected()
         }
     }
@@ -154,6 +155,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func requestAccessibilityPermission() {
         WindowFocuser.requestAccessibilityIfNeeded(prompt: true)
+    }
+
+    @objc private func requestInputMonitoringPermission() {
+        HotKeyManager.requestInputMonitoringIfNeeded()
     }
 
     @objc private func quit() {

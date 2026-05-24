@@ -59,7 +59,6 @@ autolaunch: install
 		'</plist>' > "$(LAUNCH_AGENT_PLIST)"
 	launchctl bootstrap "gui/$$(id -u)" "$(LAUNCH_AGENT_PLIST)"
 	launchctl enable "gui/$$(id -u)/$(LAUNCH_AGENT_ID)"
-	open "$(INSTALLED_APP)"
 
 uninstall-autolaunch:
 	launchctl bootout "gui/$$(id -u)" "$(LAUNCH_AGENT_PLIST)" 2>/dev/null || true

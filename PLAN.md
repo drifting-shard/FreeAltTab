@@ -4,7 +4,7 @@
 
 | Area | Decision | Reason |
 | --- | --- | --- |
-| Shortcut | `Option-Tab` | Matches the requested AltTab-style trigger without colliding with `Command-Tab`. |
+| Shortcut | `Command-Tab` HID event tap | macOS reserves `Command-Tab`, so intercept at the HID event tap layer and swallow Tab down/up before Dock shows the system switcher. |
 | Window source | SkyLight active Space window list | `CGSGetActiveSpace` + `CGSCopyWindowsWithOptionsAndTags` asks SkyLight for the active Space's windows directly. |
 | Window filtering | SkyLight window IDs, layer `0`, visible bounds, non-helper PID | Avoids stale previous-Desktop results from visible-window merge or per-window Space inference. |
 | Window ordering | Preserve CoreGraphics front-to-back order | Area sorting pins full-size windows arbitrarily, which makes Codex appear fixed at the top. |
@@ -12,15 +12,17 @@
 | UI | Nonactivating floating `NSPanel` overlay | The switcher must not activate the app or join all Spaces, because either can show stale lists on another Desktop. |
 | UI shape | Fit-content translucent icon strip | Window choices should sit on one rounded frosted backdrop sized to the visible icon tiles. |
 | Permissions | Accessibility prompt from menu only | Exact-window raise needs Accessibility, but the global shortcut must never re-open the system prompt. |
+| Input Monitoring | Required for `Command-Tab` interception | HID keyboard event taps can fail when macOS has not granted listen-event access. |
 | Debugging | `/tmp/SpaceWindowSwitcher-debug.log` | Records frontmost app, source path, Space ID, and collected windows when Space behavior is wrong. |
 | Install | User LaunchAgent + `~/Applications` app copy | Login startup should not depend on the mutable `build/` directory. |
 | Sharing | Zip the signed `.app` bundle | Teammates can unzip, move to Applications, open once, and grant Accessibility. |
+| README | Minimal operator guide | Keep setup/use/share/remove steps short enough to hand to teammates. |
 
 ## Implementation Contract
 
 1. Create a menu-bar/accessory macOS app.
-2. Register global `Option-Tab` with Carbon `RegisterEventHotKey`.
-3. On first `Option-Tab`:
+2. Register global `Command-Tab` with a CoreGraphics HID keyboard event tap.
+3. On first `Command-Tab`:
    - read the active Space ID from SkyLight with `CGSGetActiveSpace`
    - use a fresh SkyLight connection for each invocation
    - ask SkyLight for ordered window IDs in that active Space
@@ -35,12 +37,13 @@
    - size the panel from item count, capped for long window lists
    - preselect the next window when possible
 4. While panel is visible:
-   - `Option-Tab`, `Tab`, `Right`, `Down` move forward inside the same Space
-   - if `Option-Tab` fires from a different active Space, reload the window list first
+   - `Command-Tab`, `Tab`, `Right`, `Down` move forward inside the same Space
+   - swallow `Command-Tab` key down/up events so the macOS switcher does not also appear
+   - if `Command-Tab` fires from a different active Space, reload the window list first
    - `Left`, `Up` move backward
    - `Return` activates selected
    - `Escape` cancels
-   - releasing `Option` activates selected
+   - releasing `Command` activates selected
 5. Focus selected window:
    - activate owning app by PID as a fallback
    - set the AX app `frontmost` attribute when trusted
@@ -51,13 +54,16 @@
 7. Fall back to `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` if SkyLight is unavailable.
 8. Keep permission prompting explicit:
    - menu item `Request Accessibility Permission` may show the macOS prompt
-   - `Option-Tab` and switcher navigation must not show the macOS prompt
-9. Log one compact debug line per switcher open.
+   - menu item `Request Input Monitoring Permission` may show the macOS prompt
+   - `Command-Tab` and switcher navigation must not show the macOS prompt
+9. Log one compact debug line per switcher open and tap registration status at launch.
 10. Provide local install targets:
    - `make install` copies app to `~/Applications`
    - `make autolaunch` registers a LaunchAgent for login startup
    - `make uninstall-autolaunch` removes the LaunchAgent
    - `make package` creates a teammate-shareable zip
+   - `make autolaunch` must not also `open` a second manual copy
+11. Keep `README.md` minimal: purpose, install, permissions, usage, sharing, uninstall.
 
 ## Verification
 
@@ -67,11 +73,11 @@
 | `make autolaunch` | App is copied to `~/Applications` and LaunchAgent is loaded. |
 | `make package` | Produces `dist/SpaceWindowSwitcher.zip`. |
 | Launch app | Menu bar icon appears. |
-| Press `Option-Tab` | Overlay lists windows from current Desktop/Space only. |
-| Press `Option-Tab` repeatedly | Selection advances. |
-| Release `Option` | Selected window is focused/raised. |
-| Switch Desktop and press `Option-Tab` | List reflects that Desktop, not all Spaces. |
-| Press `Option-Tab` without Accessibility trust | No repeated permission prompt appears. |
+| Press `Command-Tab` | Overlay lists windows from current Desktop/Space only. |
+| Press `Command-Tab` repeatedly | Selection advances. |
+| Release `Command` | Selected window is focused/raised. |
+| Switch Desktop and press `Command-Tab` | List reflects that Desktop, not all Spaces. |
+| Press `Command-Tab` without Accessibility trust | No repeated permission prompt appears. |
 
 ## Known Limits
 

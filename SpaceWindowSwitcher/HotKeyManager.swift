@@ -1,112 +1,112 @@
+import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
 
 final class HotKeyManager {
     var handler: (() -> Void)?
 
-    private let keyCode: UInt32
-    private let modifiers: UInt32
-    private let hotKeyID = EventHotKeyID(signature: "SpSw".fourCharCode, id: 1)
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
+    private let keyCode: Int64
+    private let requiredFlags: CGEventFlags
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
 
-    init(keyCode: UInt32, modifiers: UInt32) {
+    init(keyCode: Int64, requiredFlags: CGEventFlags) {
         self.keyCode = keyCode
-        self.modifiers = modifiers
+        self.requiredFlags = requiredFlags
     }
 
     deinit {
         unregister()
     }
 
-    static func optionTab() -> HotKeyManager {
-        HotKeyManager(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey))
+    static func commandTab() -> HotKeyManager {
+        HotKeyManager(keyCode: Int64(kVK_Tab), requiredFlags: .maskCommand)
+    }
+
+    static func requestInputMonitoringIfNeeded() {
+        let granted = CGRequestListenEventAccess()
+        DebugLogger.log("inputMonitoring request result=\(granted)")
     }
 
     func register() {
         unregister()
+        DebugLogger.log("hotkey register start axTrusted=\(AXIsProcessTrusted()) inputMonitoring=\(CGPreflightListenEventAccess())")
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: OSType(kEventHotKeyPressed)
-        )
+        let eventMask = [
+            CGEventType.keyDown,
+            CGEventType.keyUp,
+            CGEventType.tapDisabledByTimeout,
+            CGEventType.tapDisabledByUserInput
+        ].reduce(CGEventMask(0)) { mask, type in
+            mask | (CGEventMask(1) << CGEventMask(type.rawValue))
+        }
 
         let selfPointer = Unmanaged.passUnretained(self).toOpaque()
-        let installStatus = InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, userData in
-                guard let event, let userData else {
-                    return noErr
-                }
-
-                var pressedHotKeyID = EventHotKeyID()
-                let status = GetEventParameter(
-                    event,
-                    EventParamName(kEventParamDirectObject),
-                    EventParamType(typeEventHotKeyID),
-                    nil,
-                    MemoryLayout<EventHotKeyID>.size,
-                    nil,
-                    &pressedHotKeyID
-                )
-
-                guard status == noErr else {
-                    return status
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: eventMask,
+            callback: { _, type, event, userData in
+                guard let userData else {
+                    return Unmanaged.passUnretained(event)
                 }
 
                 let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-                if pressedHotKeyID.signature == manager.hotKeyID.signature,
-                   pressedHotKeyID.id == manager.hotKeyID.id {
+
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let eventTap = manager.eventTap {
+                        CGEvent.tapEnable(tap: eventTap, enable: true)
+                    }
+
+                    return Unmanaged.passUnretained(event)
+                }
+
+                guard (type == .keyDown || type == .keyUp),
+                      event.getIntegerValueField(.keyboardEventKeycode) == manager.keyCode,
+                      event.flags.contains(manager.requiredFlags) else {
+                    return Unmanaged.passUnretained(event)
+                }
+
+                if type == .keyDown {
                     DispatchQueue.main.async {
                         manager.handler?()
                     }
                 }
 
-                return noErr
+                return nil
             },
-            1,
-            &eventType,
-            selfPointer,
-            &eventHandlerRef
-        )
-
-        guard installStatus == noErr else {
-            NSLog("SpaceWindowSwitcher failed to install hotkey handler: \(installStatus)")
+            userInfo: selfPointer
+        ) else {
+            let message = "hotkey eventTap=hid failed axTrusted=\(AXIsProcessTrusted()) inputMonitoring=\(CGPreflightListenEventAccess())"
+            NSLog("SpaceWindowSwitcher \(message)")
+            DebugLogger.log(message)
             return
         }
 
-        let registerStatus = RegisterEventHotKey(
-            keyCode,
-            modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
-
-        if registerStatus != noErr {
-            NSLog("SpaceWindowSwitcher failed to register Option-Tab: \(registerStatus)")
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            DebugLogger.log("hotkey eventTap=hid failed to create runLoopSource")
+            CFMachPortInvalidate(tap)
+            return
         }
+
+        eventTap = tap
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        DebugLogger.log("hotkey eventTap=hid shortcut=Command-Tab registered")
     }
 
     func unregister() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+            self.eventTap = nil
         }
 
-        if let eventHandlerRef {
-            RemoveEventHandler(eventHandlerRef)
-            self.eventHandlerRef = nil
-        }
-    }
-}
-
-private extension String {
-    var fourCharCode: FourCharCode {
-        unicodeScalars.reduce(0) { result, scalar in
-            (result << 8) + FourCharCode(scalar.value)
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+            self.runLoopSource = nil
         }
     }
 }
-
